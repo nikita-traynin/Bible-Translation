@@ -1,0 +1,322 @@
+### PROCESS.PY FILE BELOW-----------------------------------------------------------------------------------
+
+import pandas as pd
+import re
+from string import punctuation
+import requests
+import xml.etree.ElementTree as ET
+from collections import Counter
+
+
+def create_file(url, name):
+    """
+    Creates an xml file from the url given.
+
+    :param url: URL at which the xml file is located
+    :param name: name of the desired xml file to create
+    :return: None
+    """
+    cntnt = requests.get(url).content
+    txtfile = open(name, "w", encoding="utf-8")
+    txtfile.write(cntnt.decode(encoding="utf-8"))
+
+
+def parse_xml_file(file):
+    """
+    Parses an xml file and creates a dataframe with all labeled verses.
+
+    :param file: An xml file
+    :return: A dataframe. First column is the verse id, and second column is the verse text.
+    """
+    verse_list = []
+    bible_tree = ET.parse(file)
+    root = bible_tree.getroot()
+
+    for element in root.iter():
+        if element.get("type") == "verse":
+            verse_list.append([element.get("id"), element.text.strip()])
+
+    bible_df = pd.DataFrame(verse_list, columns=["Verse", "Text"])
+    return bible_df
+
+
+def clean_text(text_list):
+    """
+    Removes certain special characters, puts spaces between all punctuation and words, and makes it lowercase.
+
+    :param text_list: list of strings (verses)
+    :return: modifies list in-place
+    """
+    for i in range(len(text_list)):
+        # Get rid of inverted punctuation and such
+        text_list[i] = re.sub('([' + chr(161) + chr(191) + '])', '', text_list[i])
+
+        # Put spaces between all words and punctuation, (except apostrophes since those are part of the word)
+        text_list[i] = re.sub('([' + punctuation.replace("\'", "") + '])', r' \1 ', text_list[i])
+
+        # Get rid of all multiple spaces in a row
+        text_list[i] = re.sub(' +', ' ', text_list[i])
+
+        # Make it lowercase
+        text_list[i] = text_list[i].lower()
+
+
+# Write to xml files from online URLs
+create_file("https://raw.githubusercontent.com/christos-c/bible-corpus/master/bibles/Spanish.xml", "Spanish.xml")
+create_file("https://raw.githubusercontent.com/christos-c/bible-corpus/master/bibles/English.xml", "English.xml")
+
+# Parse the xml's into useful dataframes
+spanish_df = parse_xml_file("Spanish.xml")
+english_df = parse_xml_file("English.xml")
+
+# Clean the bible text
+clean_text(english_df["Text"])
+clean_text(spanish_df["Text"])
+
+# Get list of words in order
+english_word_list = ("".join(english_df["Text"])).split(" ")
+english_word_list = [x for x in english_word_list if x != ""]
+
+spanish_word_list = (" . ".join(spanish_df["Text"])).split(" ")
+spanish_word_list = [x for x in spanish_word_list if x != ""]
+
+# Get vocabulary sets
+english_vocab_set = set(english_word_list)
+spanish_vocab_set = set(spanish_word_list)
+
+# Create counter objects
+english_counter = Counter(english_word_list)
+spanish_counter = Counter(spanish_word_list)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### HELPER.PY CODE BELOW-------------------------------------------------------------------------------------
+
+import numpy as np
+
+
+def tanh_element_wise(x):
+    """
+    Simply returned the hyperbolic tangent of every element in x
+
+    :param x: Numpy array
+    :return: Numpy array of elementwise tanh of x
+    """
+    return (np.exp(x) - np.exp(-x)) / (np.exp(x) + np.exp(-x))
+
+
+def encode(word_list, encoding_dict):
+    """
+    Encodes a list of words, from a string to an integer (which should be uniquely assigned to each unique word)
+    This is like one-hot encoding but returns a single index instead of a a series of 0's with a 1 at that index.
+    The result of the algorithm will be identical either way.
+
+    :param word_list: A list of strings
+    :param encoding_dict: A dictionary, string keys and integer values
+    :return: A list of integers.
+    """
+    index_list = []
+    for word in word_list:
+        index_list.append(encoding_dict[word])
+    return index_list
+
+
+def embed(index_list, matrix):
+    """
+    Embeds a given (already one-hot encoded) list of words.
+
+    :param index: An list of integer, (0 <= integer < length of vocab list)
+    :param matrix: The embedding matrix, which the algorithm learns
+    :return: A list of kx1 numpy arrays, k being the embedding dimension.
+    """
+    # Get embedding dimension
+    embed_dim = matrix.shape[0]
+
+    embedded_vector_list = []
+    for index in index_list:
+        vector = []
+        for i in range(embed_dim):
+            vector.append(matrix[i][index])
+        vector = np.array(vector).reshape(embed_dim, 1)
+        embedded_vector_list.append(vector)
+
+    # Return kx1 numpy array (k is embedding dimension)
+    return embedded_vector_list
+
+
+def cosine_similarity(vec1, vec2):
+    return np.matmul(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### MAIN.PY CODE BELOW-------------------------------------------------------------------------------------
+from Process import *   # For the dataframes, word lists, and vocab sets of the two bibles.
+from Helper import *
+import gensim
+from gensim.models import word2vec
+import numpy as np
+
+
+# Create word to integer dictionary (isomorphic to one-hot-encoding)
+english_vocab_to_int = {word: integer for integer, word in enumerate(english_vocab_set)}
+spanish_vocab_to_int = {word: integer for integer, word in enumerate(spanish_vocab_set)}
+
+# For going from embedded space to original word
+spanish_int_to_vocab = {integer: word for integer, word in enumerate(spanish_vocab_set)}
+
+# Hyperparameters:
+k = 50       # embedding dimension
+L = 10        # hidden layer size
+
+# size of vocabulary
+s = len(english_vocab_set)
+s_ = len(spanish_vocab_set)
+
+# Initializing the network connections
+# Encoding matrices
+M = np.random.normal(0, 1, (k, s))         # English Embedding matrix
+
+W = np.random.normal(0, 1, (L, k))         # Matrix for new x(t)
+U = np.random.normal(0, 1, (L, L))         # Matrix for previous h(t-1)
+b = np.random.normal(0, 1, (L, 1))         # Bias for calculating neuron activation
+h_0 = np.zeros((L, 1))
+
+# Decoding matrices
+M_ = np.random.normal(0, 1, (k, s_))                                   # Spanish embedding matrix
+initial_matrix = np.random.normal(0, 1, (L, L))                        # Context -> h_(0)
+
+V_ = np.random.normal(0, 1, (k, L))                                    # Hidden to output matrix
+c_ = np.random.normal(0, 1, (k, 1))                                    # Hidden to output bias
+
+U_ = np.random.normal(0, 1, (L, L))                                    # Matrix for previous h_(t-1) to hidden
+W_ = np.random.normal(0, 1, (L, k))                                    # Matrix for previous output o_(t-1) to hidden
+C_ = np.random.normal(0, 1, (L, L))                                    # Matrix for context vector
+b_ = np.random.normal(0, 1, (L, 1))                                    # Bias for hidden node
+
+print("Starting the algorithm: ")
+
+# MAIN ALGORITHM LOOP
+for verse_index in range(5):  # range(english_df.shape[0]): # TODO you can change this depending on how much times you
+                                                            # have to run the program: the whole range can take hours.
+    # Encoder-----------------------------------------------------------------------------------------------------------
+    eng_verse_word_list = english_df["Text"][verse_index].split()
+    eng_verse_vector_list = embed(encode(eng_verse_word_list, english_vocab_to_int), M)
+
+    # Forward loop
+    h = h_0  # initial state (zeros)
+    for vec in eng_verse_vector_list:
+        A = b + np.matmul(W, vec) + np.matmul(U, h)
+        h = tanh_element_wise(A)
+
+    # Our final output from the encoder
+    context = h
+    print("Context for verse ", verse_index, ": ", context)
+
+    # Decoder-----------------------------------------------------------------------------------------------------------
+    esp_verse_word_list = spanish_df["Text"][verse_index].split()
+    esp_verse_length = len(esp_verse_word_list)
+    esp_verse_vector_list = embed(encode(esp_verse_word_list, spanish_vocab_to_int), M_)
+
+    # Initializing the decoder
+    h_ = tanh_element_wise(np.matmul(initial_matrix, context))             # First hidden node value
+    y_ = [np.matmul(V_, h_) + c_]                                          # Output list initialized with first value
+
+    # Prediction and loss initialization
+    norms = np.linalg.norm(M_ - y_[0], axis=0)
+    y_decoded = [np.argmin(norms)]
+    loss = [norms[y_decoded[0]]]
+
+    # Looping through the rest of the output verse
+    for i, word in enumerate(esp_verse_word_list[1:]):
+        # Calculate hidden node and it's output
+        h_ = np.matmul(U_, h_) + np.matmul(W_, y_[i-1]) + np.matmul(C_, context) + b_
+        y_.append(np.matmul(V_, h_) + c_)
+
+        # Calculate norms between output and all possible embeddings
+        norms = np.linalg.norm(M_ - y_[i], axis=0)
+
+        # Add the index of the most similar embedding
+        y_decoded.append(np.argmin(norms))
+
+        # Add the loss of the predicted embedding
+        loss.append(norms[y_decoded[i]])
+
+    # Print output as words
+    print("\nVerse:", english_df["Verse"][verse_index])
+    for word_index in y_decoded:
+        print(spanish_int_to_vocab[word_index], end=" ")
+
+    # Back propagate (takes to long to run on most processors - big gradient matrices). 
